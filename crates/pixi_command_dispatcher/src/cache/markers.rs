@@ -32,6 +32,9 @@ impl CacheLocation for PackagesDir {
     fn base() -> CacheBase {
         CacheBase::Root
     }
+    fn env_override() -> Option<&'static str> {
+        Some("PIXI_CACHE_CONDA_PACKAGES_DIR")
+    }
 }
 
 /// Backend metadata cache + per-source backend scratch tree.

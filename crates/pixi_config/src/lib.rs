@@ -4247,6 +4247,26 @@ UNUSED = "unused"
     }
 
     #[test]
+    fn cache_dir_for_redirects_shared_kinds_when_netfs_redirect_always() {
+        let _guard = NETFS_ENV_LOCK.lock().unwrap();
+        let _force = ScopedEnv::set("PIXI_FORCE_NETFS_REDIRECT", "1");
+        let _cache = ScopedEnv::unset("PIXI_CACHE_DIR");
+        let _rattler = ScopedEnv::unset("RATTLER_CACHE_DIR");
+        let _disable = ScopedEnv::unset("PIXI_DISABLE_NETFS_REDIRECT");
+
+        let config = Config {
+            cache: CacheConfig {
+                netfs_redirect: NetfsRedirect::Always,
+                ..CacheConfig::default()
+            },
+            ..Config::default()
+        };
+        let got = config.cache_dir_for(CacheKind::CondaPackages).unwrap();
+        assert!(got.ends_with(consts::CONDA_PACKAGE_CACHE_DIR));
+        assert!(got.starts_with(node_local_scratch_dir()));
+    }
+
+    #[test]
     fn cache_dir_for_passes_through_when_local() {
         let _guard = NETFS_ENV_LOCK.lock().unwrap();
         let _force = ScopedEnv::unset("PIXI_FORCE_NETFS_REDIRECT");

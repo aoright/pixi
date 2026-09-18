@@ -1,6 +1,4 @@
-use std::{
-    collections::BTreeSet, collections::HashMap, path::Path, process::ExitCode, str::FromStr,
-};
+use std::{collections::BTreeSet, collections::HashMap, process::ExitCode, str::FromStr};
 
 use clap::{Parser, ValueHint};
 use indexmap::IndexSet;
@@ -78,7 +76,6 @@ pub struct Args {
 /// CLI entry point for `pixi exec`
 pub async fn execute(args: Args) -> miette::Result<ExitCode> {
     let config = Config::with_cli_config(&args.config);
-    let cache_dir = pixi_config::get_cache_dir().context("failed to determine cache directory")?;
 
     // `pixi exec` runs without a workspace, so the resolver only has the
     // bare-subdir fallback to work with. Anything that isn't a valid conda
@@ -121,7 +118,6 @@ pub async fn execute(args: Args) -> miette::Result<ExitCode> {
         &args,
         platform,
         &install_specs,
-        &cache_dir,
         &config,
         &client,
         should_guess_package,
@@ -188,7 +184,6 @@ pub async fn create_exec_prefix(
     args: &Args,
     platform: Platform,
     specs: &[MatchSpec],
-    cache_dir: &Path,
     config: &Config,
     client: &ClientWithMiddleware,
     has_guessed_package: bool,
@@ -211,11 +206,8 @@ pub async fn create_exec_prefix(
         has_guessed_package,
     );
 
-    let prefix = Prefix::new(
-        cache_dir
-            .join(pixi_consts::consts::CACHED_ENVS_DIR)
-            .join(environment_hash.name(dir_prefix.as_deref())),
-    );
+    let exec_envs_dir = config.cache_dir_for(pixi_config::CacheKind::ExecEnvironments)?;
+    let prefix = Prefix::new(exec_envs_dir.join(environment_hash.name(dir_prefix.as_deref())));
 
     // Cross-process install lock. The prefix is content-addressed by
     // `environment_hash`, so any prior finish here is reusable.
@@ -272,9 +264,10 @@ pub async fn create_exec_prefix(
 
     // `pixi exec` solves outside the command dispatcher, so it has to build
     // the offline exclusions itself rather than inheriting them.
+    let conda_packages_dir = config.cache_dir_for(pixi_config::CacheKind::CondaPackages)?;
     let excluded_candidates = exclusions_for_solve(
         config.offline(),
-        &PackageCache::new(cache_dir.join(pixi_consts::consts::CONDA_PACKAGE_CACHE_DIR)),
+        &PackageCache::new(conda_packages_dir.clone()),
         repodata.iter().flat_map(|repo_data| repo_data.iter()),
     )
     .await
@@ -355,9 +348,7 @@ pub async fn create_exec_prefix(
                 .clear_when_done(true)
                 .finish(),
         )
-        .with_package_cache(PackageCache::new(
-            cache_dir.join(pixi_consts::consts::CONDA_PACKAGE_CACHE_DIR),
-        ));
+        .with_package_cache(PackageCache::new(conda_packages_dir));
     if reinstall_all {
         installer = installer.with_reinstall_packages(
             solved_records

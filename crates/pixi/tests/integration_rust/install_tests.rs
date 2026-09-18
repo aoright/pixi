@@ -2221,3 +2221,58 @@ cuda-arch = "*"
         );
     }
 }
+
+/// Verifies that `netfs-redirect = "always"` redirects the conda package
+/// cache to node-local scratch storage during `pixi install`.
+#[tokio::test]
+async fn test_install_netfs_redirect_always_redirects_pkgs() {
+    let current_platform = Platform::current();
+    let mut db = MockRepoData::default();
+    db.add_package(
+        Package::build("test-netfs-pkg", "1.0")
+            .with_subdir(current_platform)
+            .with_materialize(true)
+            .finish(),
+    );
+    let channel = db.into_channel().await.unwrap();
+
+    let pixi = PixiControl::from_manifest(&format!(
+        r#"
+        [workspace]
+        name = "test-netfs-redirect"
+        channels = ["{channel}"]
+        platforms = ["{current_platform}"]
+
+        [dependencies]
+        test-netfs-pkg = "*"
+        "#,
+        channel = channel.url(),
+    ))
+    .unwrap();
+
+    temp_env::async_with_vars(
+        [
+            ("PIXI_FORCE_NETFS_REDIRECT", Some("1")),
+            ("PIXI_CACHE_NETFS_REDIRECT", Some("always")),
+            ("PIXI_CACHE_DIR", None),
+            ("RATTLER_CACHE_DIR", None),
+            ("PIXI_DISABLE_NETFS_REDIRECT", None),
+            ("PIXI_CACHE_CONDA_PACKAGES_DIR", None),
+        ],
+        async {
+            pixi.install().await.unwrap();
+            let user = std::env::var("USER")
+                .or_else(|_| std::env::var("USERNAME"))
+                .unwrap_or_else(|_| "pixi".to_string());
+            let scratch_pkgs = pixi_config::node_local_scratch_dir()
+                .join(format!("pixi-cache-{user}"))
+                .join(consts::CONDA_PACKAGE_CACHE_DIR);
+            assert!(
+                scratch_pkgs.exists(),
+                "expected redirected pkgs cache at {} to exist",
+                scratch_pkgs.display()
+            );
+        },
+    )
+    .await;
+}

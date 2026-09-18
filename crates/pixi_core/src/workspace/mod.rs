@@ -38,7 +38,9 @@ use miette::{Diagnostic, IntoDiagnostic};
 use once_cell::sync::OnceCell;
 use pep508_rs::Requirement;
 use pixi_build_frontend::BackendOverride;
-use pixi_command_dispatcher::{CacheDirs, CommandDispatcher, CommandDispatcherBuilder, Limits};
+use pixi_command_dispatcher::{
+    CacheDirs, CommandDispatcher, CommandDispatcherBuilder, Limits, PackagesDir,
+};
 use pixi_config::{CacheKind, Config, RunPostLinkScripts};
 use pixi_consts::consts;
 use pixi_diff::LockFileDiff;
@@ -1155,6 +1157,29 @@ impl Workspace {
             .clone()
     }
 
+    /// Returns the cache directories configured for this workspace, applying
+    /// any cache configuration overrides (such as `[cache.conda-packages]` or
+    /// netfs redirection).
+    pub fn cache_dirs(&self) -> miette::Result<CacheDirs> {
+        let cache_dir = AbsPathBuf::new(pixi_config::get_cache_dir()?)
+            .expect("cache dir is not absolute")
+            .into_assume_dir();
+        let workspace_dir = AbsPathBuf::new(self.pixi_dir())
+            .expect("pixi dir is not absolute")
+            .into_assume_dir();
+        let mut cache_dirs = CacheDirs::new(cache_dir).with_workspace(workspace_dir);
+
+        let conda_packages_dir = AbsPathBuf::new(
+            self.config()
+                .cache_dir_for(pixi_config::CacheKind::CondaPackages)?,
+        )
+        .expect("conda packages cache dir is not absolute")
+        .into_assume_dir();
+        cache_dirs.set_override::<PackagesDir>(conda_packages_dir);
+
+        Ok(cache_dirs)
+    }
+
     /// Returns a pre-filled command dispatcher builder. Seeds a
     /// [`RayonPrimer`](crate::rayon_primer::RayonPrimer) in the install /
     /// solve / instantiate-backend reporter slots, then lets `progress`
@@ -1167,13 +1192,7 @@ impl Workspace {
         &self,
         progress: Option<&Arc<pixi_reporters::TopLevelProgress>>,
     ) -> miette::Result<CommandDispatcherBuilder> {
-        let cache_dir = AbsPathBuf::new(pixi_config::get_cache_dir()?)
-            .expect("cache dir is not absolute")
-            .into_assume_dir();
-        let workspace_dir = AbsPathBuf::new(self.pixi_dir())
-            .expect("pixi dir is not absolute")
-            .into_assume_dir();
-        let cache_dirs = CacheDirs::new(cache_dir).with_workspace(workspace_dir);
+        let cache_dirs = self.cache_dirs()?;
 
         // Determine the tool platform to use
         let tool_platform = self.config().tool_platform();
@@ -2850,5 +2869,70 @@ packages: []
         let warning_b = fs_err::read_to_string(&warning_file).unwrap();
         assert!(warning_b.contains(&target_dir_b.display().to_string()));
         assert!(!warning_b.contains(&target_dir_a.display().to_string()));
+    }
+
+    #[test]
+    fn test_cache_dirs_packages_dir_override() {
+        let workspace_dir = tempfile::tempdir().unwrap();
+        let workspace = Workspace::from_str(
+            &workspace_dir.path().join(consts::WORKSPACE_MANIFEST),
+            WORKSPACE_MANIFEST_STR,
+        )
+        .unwrap()
+        .with_cli_config(Config {
+            cache: CacheConfig {
+                conda_packages: Some(PathBuf::from("/custom/conda-packages-path")),
+                ..CacheConfig::default()
+            },
+            ..Default::default()
+        });
+
+        let cache_dirs = workspace.cache_dirs().unwrap();
+        let pkgs_dir = cache_dirs.resolve_from_env::<PackagesDir>();
+        assert_eq!(
+            pkgs_dir.as_std_path(),
+            Path::new("/custom/conda-packages-path")
+        );
+    }
+
+    #[test]
+    fn test_cache_dirs_packages_dir_redirects_when_netfs_redirect_always() {
+        let workspace_dir = tempfile::tempdir().unwrap();
+        let workspace = Workspace::from_str(
+            &workspace_dir.path().join(consts::WORKSPACE_MANIFEST),
+            WORKSPACE_MANIFEST_STR,
+        )
+        .unwrap()
+        .with_cli_config(Config {
+            cache: CacheConfig {
+                netfs_redirect: pixi_config::NetfsRedirect::Always,
+                ..CacheConfig::default()
+            },
+            ..Default::default()
+        });
+
+        temp_env::with_vars(
+            [
+                ("PIXI_FORCE_NETFS_REDIRECT", Some("1")),
+                ("PIXI_CACHE_DIR", None),
+                ("RATTLER_CACHE_DIR", None),
+                ("PIXI_DISABLE_NETFS_REDIRECT", None),
+                ("PIXI_CACHE_CONDA_PACKAGES_DIR", None),
+            ],
+            || {
+                let cache_dirs = workspace.cache_dirs().unwrap();
+                let pkgs_dir = cache_dirs.resolve_from_env::<PackagesDir>();
+                assert!(
+                    pkgs_dir
+                        .as_std_path()
+                        .ends_with(consts::CONDA_PACKAGE_CACHE_DIR)
+                );
+                assert!(
+                    pkgs_dir
+                        .as_std_path()
+                        .starts_with(pixi_config::node_local_scratch_dir())
+                );
+            },
+        );
     }
 }
