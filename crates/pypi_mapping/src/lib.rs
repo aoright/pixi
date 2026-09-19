@@ -181,6 +181,27 @@ impl Middleware for DelegateToClient {
     }
 }
 
+/// Create a dummy base `reqwest::Client` for the outer middleware pipeline.
+///
+/// The outer pipeline uses [`DelegateToClient`] to dispatch all real requests
+/// to the caller's pre-configured `client`, so this base client is never actually
+/// used for network requests.
+///
+/// Calling bare `reqwest::Client::new()` unconditionally queries the host OS
+/// for system root certificates (via `rustls-platform-verifier`), which panics
+/// on environments without a standard system certificate store (such as Termux
+/// on Android, see issue #6825), even when Pixi was configured with
+/// `tls-root-certs = "webpki"`.
+///
+/// Configuring `tls_certs_only(empty)` bypasses system CA inspection while
+/// safely constructing the dummy client.
+fn dummy_base_reqwest_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .tls_certs_only(std::iter::empty::<reqwest::Certificate>())
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
+
 impl PurlDerivationClient {
     /// Construct a new `PurlDerivationClientBuilder` with the provided `Client` and
     /// the resolved on-disk `cache_path` for the conda-pypi mapping cache.
@@ -217,7 +238,7 @@ impl PurlDerivationClient {
 
         let wrapped_client = LazyClient::new(move || {
             let client = client.client().clone();
-            ClientBuilder::new(reqwest::Client::new())
+            ClientBuilder::new(dummy_base_reqwest_client())
                 .with(retry_strategy)
                 .with(cache_strategy)
                 .with(DelegateToClient(client))
@@ -478,4 +499,26 @@ fn replace_pypi_purls(record: &mut RepoDataRecord, purls: impl IntoIterator<Item
         .get_or_insert_with(BTreeSet::new);
     record_purls.retain(|purl| purl.package_type() != "pypi");
     record_purls.extend(purls);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_dummy_base_reqwest_client_does_not_panic() {
+        // Must construct cleanly without panicking even on systems with no CA store.
+        let client = dummy_base_reqwest_client();
+        let _ = client;
+    }
+
+    #[test]
+    fn test_purl_derivation_client_builder_initializes_wrapped_client() {
+        let lazy = LazyClient::default();
+        let purl_client =
+            PurlDerivationClient::builder(lazy, PathBuf::from("/dummy/cache/path"), false).finish();
+        // Trigger lazy initialization to ensure ClientBuilder::new(dummy_base_reqwest_client())
+        // executes and builds without panic.
+        let _ = purl_client.client.client();
+    }
 }
