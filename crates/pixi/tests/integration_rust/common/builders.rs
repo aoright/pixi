@@ -769,6 +769,21 @@ impl GlobalInstallBuilder {
         self.args.force_reinstall = force_reinstall;
         self
     }
+
+    pub fn with_channel(mut self, channel: impl ToString) -> Self {
+        self.args
+            .channels
+            .push(NamedChannelOrUrl::from_str(&channel.to_string()).unwrap());
+        self
+    }
+
+    pub fn with_local_channel(mut self, channel: impl AsRef<Path>) -> Self {
+        let url = Url::from_directory_path(channel).unwrap();
+        self.args
+            .channels
+            .push(NamedChannelOrUrl::from_str(url.as_str()).unwrap());
+        self
+    }
 }
 
 impl IntoFuture for GlobalInstallBuilder {

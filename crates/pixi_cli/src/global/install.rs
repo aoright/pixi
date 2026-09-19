@@ -41,7 +41,7 @@ pub struct Args {
     ///
     /// By default, if no channel is provided, `conda-forge` is used.
     #[clap(long = "channel", short = 'c', value_name = "CHANNEL")]
-    channels: Vec<NamedChannelOrUrl>,
+    pub channels: Vec<NamedChannelOrUrl>,
 
     /// The platform to install the packages for.
     ///

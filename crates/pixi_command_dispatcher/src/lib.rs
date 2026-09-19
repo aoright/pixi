@@ -163,9 +163,10 @@ fn is_default<T: Default + PartialEq>(value: &T) -> bool {
 /// ### Note
 ///
 /// This feature is still in very early stages and is not yet fully implemented.
-#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, Serialize, Default)]
 pub enum BuildProfile {
     /// Build a version of the package that is suitable for development.
+    #[default]
     Development,
 
     /// Build a version of the package that is suitable for release.

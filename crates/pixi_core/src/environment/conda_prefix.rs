@@ -285,6 +285,7 @@ pub async fn update_prefix_conda(
             variant_configuration: Some(variant_configuration),
             variant_files: Some(variant_files),
             inline_packages,
+            build_profile: Default::default(),
         })
         .await?;
 

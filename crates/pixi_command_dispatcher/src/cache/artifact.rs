@@ -50,6 +50,7 @@ use tokio::sync::Semaphore;
 use url::Url;
 use xxhash_rust::xxh3::Xxh3;
 
+use crate::BuildProfile;
 use crate::file_fingerprint::spawn_blocking_with_io_permit;
 use crate::input_snapshot::{
     InputFileState, InputSnapshot, SnapshotFreshness, StaleFile, StaleFileReason,
@@ -90,6 +91,7 @@ impl std::fmt::Display for ArtifactCacheKey {
 /// Inputs that go into the hash:
 /// - package name, pinned manifest source, pinned build source, variants
 /// - build + host platform
+/// - build profile (development vs. release)
 /// - backend identifier (version + name of the build backend)
 /// - url + sha256 of every binary dep in `build_packages` / `host_packages`,
 ///   tagged by bucket so a dep moving build ↔ host invalidates
@@ -115,6 +117,7 @@ pub fn compute_artifact_cache_key(
     project_model_overrides: &crate::ProjectModelOverrides,
     package_format: Option<pixi_build_types::procedures::conda_build_v1::CondaPackageFormat>,
     inline_content_hash: Option<InlineContentHash>,
+    build_profile: BuildProfile,
 ) -> ArtifactCacheKey {
     let mut hasher = Xxh3::new();
     record.name().as_normalized().hash(&mut hasher);
@@ -133,6 +136,8 @@ pub fn compute_artifact_cache_key(
     project_model_overrides.hash(&mut hasher);
     // Distinguish artifacts by output format.
     package_format.hash(&mut hasher);
+    // Distinguish development (e.g. editable) vs release builds.
+    build_profile.hash(&mut hasher);
 
     // Bucket-tagged streams: the same (url, sha256) behaves differently
     // when installed into the build prefix vs. the host prefix because
@@ -2227,6 +2232,7 @@ mod cache_key_tests {
     use typed_path::Utf8TypedPathBuf;
 
     use super::compute_artifact_cache_key;
+    use crate::BuildProfile;
 
     fn record(name: &str) -> UnresolvedSourceRecord {
         let mut pr = PackageRecord::new(
@@ -2296,6 +2302,7 @@ mod cache_key_tests {
             &Default::default(),
             None,
             None,
+            BuildProfile::Development,
         )
         .to_string()
     }
@@ -2366,6 +2373,7 @@ mod cache_key_tests {
             &Default::default(),
             None,
             None,
+            BuildProfile::Development,
         )
         .to_string();
         let k2 = compute_artifact_cache_key(
@@ -2378,6 +2386,7 @@ mod cache_key_tests {
             &Default::default(),
             None,
             None,
+            BuildProfile::Development,
         )
         .to_string();
         assert_ne!(k1, k2);
@@ -2396,6 +2405,7 @@ mod cache_key_tests {
             &Default::default(),
             None,
             None,
+            BuildProfile::Development,
         )
         .to_string();
         let k2 = compute_artifact_cache_key(
@@ -2408,6 +2418,7 @@ mod cache_key_tests {
             &Default::default(),
             None,
             None,
+            BuildProfile::Development,
         )
         .to_string();
         assert_ne!(k1, k2);
@@ -2490,6 +2501,7 @@ mod cache_key_tests {
             &Default::default(),
             None,
             None,
+            BuildProfile::Development,
         )
         .to_string();
         let k2 = compute_artifact_cache_key(
@@ -2502,6 +2514,7 @@ mod cache_key_tests {
             &Default::default(),
             None,
             None,
+            BuildProfile::Development,
         )
         .to_string();
         assert_ne!(k1, k2);
@@ -2524,6 +2537,7 @@ mod cache_key_tests {
             &Default::default(),
             None,
             None,
+            BuildProfile::Development,
         )
         .to_string();
         let host_only = compute_artifact_cache_key(
@@ -2536,6 +2550,7 @@ mod cache_key_tests {
             &Default::default(),
             None,
             None,
+            BuildProfile::Development,
         )
         .to_string();
         assert_ne!(build_only, host_only);
@@ -2600,6 +2615,7 @@ mod cache_key_tests {
             &Default::default(),
             None,
             None,
+            BuildProfile::Development,
         );
         let osx_arm = compute_artifact_cache_key(
             &r,
@@ -2611,6 +2627,7 @@ mod cache_key_tests {
             &Default::default(),
             None,
             None,
+            BuildProfile::Development,
         );
         assert_ne!(linux, osx_arm);
     }
@@ -2628,6 +2645,7 @@ mod cache_key_tests {
             &Default::default(),
             None,
             None,
+            BuildProfile::Development,
         );
         let prefixed = compute_artifact_cache_key(
             &r,
@@ -2642,6 +2660,7 @@ mod cache_key_tests {
             },
             None,
             None,
+            BuildProfile::Development,
         );
         assert_ne!(bare, prefixed);
     }
@@ -2659,6 +2678,7 @@ mod cache_key_tests {
             &Default::default(),
             None,
             None,
+            BuildProfile::Development,
         );
         let numbered = compute_artifact_cache_key(
             &r,
@@ -2673,6 +2693,7 @@ mod cache_key_tests {
             },
             None,
             None,
+            BuildProfile::Development,
         );
         assert_ne!(bare, numbered);
     }
@@ -2695,6 +2716,7 @@ mod cache_key_tests {
                 compression_level: Default::default(),
             }),
             None,
+            BuildProfile::Development,
         );
         let tar_bz2 = compute_artifact_cache_key(
             &r,
@@ -2709,6 +2731,7 @@ mod cache_key_tests {
                 compression_level: Default::default(),
             }),
             None,
+            BuildProfile::Development,
         );
         assert_ne!(conda, tar_bz2);
     }
@@ -2735,6 +2758,7 @@ mod cache_key_tests {
                 &Default::default(),
                 Some(pf(level)),
                 None,
+                BuildProfile::Development,
             )
         };
         let default_level = key(CondaCompressionLevel::Named(NamedCompressionLevel::Default));
@@ -2743,5 +2767,35 @@ mod cache_key_tests {
         assert_ne!(default_level, max_level);
         assert_ne!(default_level, numeric_level);
         assert_ne!(max_level, numeric_level);
+    }
+
+    #[test]
+    fn build_profile_matters() {
+        let r = record("foo");
+        let dev = compute_artifact_cache_key(
+            &r,
+            Platform::Linux64,
+            Platform::Linux64,
+            "b",
+            &[],
+            &[],
+            &Default::default(),
+            None,
+            None,
+            BuildProfile::Development,
+        );
+        let release = compute_artifact_cache_key(
+            &r,
+            Platform::Linux64,
+            Platform::Linux64,
+            "b",
+            &[],
+            &[],
+            &Default::default(),
+            None,
+            None,
+            BuildProfile::Release,
+        );
+        assert_ne!(dev, release);
     }
 }

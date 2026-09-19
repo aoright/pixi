@@ -23,7 +23,7 @@ use rattler::install::{
 use rattler_conda_types::{ChannelUrl, PackageName, PrefixRecord, RepoDataRecord, prefix::Prefix};
 use thiserror::Error;
 
-use crate::{BuildEnvironment, SourceBuildError};
+use crate::{BuildEnvironment, BuildProfile, SourceBuildError};
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -63,6 +63,10 @@ pub struct InstallPixiEnvironmentSpec {
     /// discovering one on disk. Empty when no inline definitions are in scope.
     #[serde(skip)]
     pub inline_packages: HashMap<PackageName, crate::InlinePackage>,
+
+    /// The profile to build source packages with.
+    #[serde(default)]
+    pub build_profile: BuildProfile,
 }
 
 pub struct InstallPixiEnvironmentResult {
@@ -104,6 +108,7 @@ impl InstallPixiEnvironmentSpec {
             variant_configuration: None,
             variant_files: None,
             inline_packages: HashMap::new(),
+            build_profile: BuildProfile::Development,
         }
     }
 }

@@ -215,6 +215,7 @@ async fn compute_inner(
         &project_model_overrides,
         spec.package_format,
         spec.inline.as_ref().map(|inline| inline.content_hash),
+        spec.build_profile,
     );
 
     // On artifact cache hit, return without invoking the backend.
@@ -777,6 +778,7 @@ async fn install_prefix(
         // Build/host environments install pre-built packages; no inline
         // definitions apply here.
         inline_packages: Default::default(),
+        build_profile: Default::default(),
     };
     let result = ctx
         .install_pixi_environment(install_spec)

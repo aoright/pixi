@@ -11,7 +11,7 @@ use pixi_global::project::FromMatchSpecError;
 use pixi_spec::{PixiSpec, Subdirectory, SubdirectoryError};
 use rattler_conda_types::{
     ChannelConfig, MatchSpec, NamedChannelOrUrl, PackageName, ParseMatchSpecError,
-    ParseMatchSpecOptions, RepodataRevision,
+    ParseMatchSpecOptions, RepodataRevision, package::CondaArchiveType,
 };
 use typed_path::Utf8NativePathBuf;
 
@@ -287,10 +287,7 @@ impl GlobalSpecs {
             let absolute_path = dunce::canonicalize(path.as_str())
                 .map_err(|_| GlobalSpecsConversionError::AbsolutizePath(path.to_string()))?;
 
-            let is_conda = absolute_path
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("conda"));
+            let is_conda = CondaArchiveType::try_from(absolute_path.as_path()).is_some();
 
             let absolute_path = if is_conda {
                 let pixi_home_dir =
@@ -342,7 +339,10 @@ impl GlobalSpecs {
             )))
         } else {
             fn pathlike(s: &str) -> bool {
-                s.contains(".conda") || s.contains('/') || s.contains('\\')
+                s.contains(".conda")
+                    || s.contains(".tar.bz2")
+                    || s.contains('/')
+                    || s.contains('\\')
             }
             if let Some(pathlike_input) = self.specs.iter().find(|s| pathlike(s)) {
                 return Err(GlobalSpecsConversionError::MissingPathArg(
@@ -604,6 +604,66 @@ mod tests {
                 assert!(
                     expected_destination.is_file(),
                     "expected copied .conda file to exist"
+                );
+            }
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_to_global_specs_with_tar_bz2_path_copies_file() {
+        let temp_dir = tempdir().unwrap();
+        let pixi_home_dir = temp_dir.path().join("pixi-home");
+        let file_name = "custom-package.tar.bz2".to_string();
+        let source_path = temp_dir.path().join(&file_name);
+        fs::write(&source_path, b"dummy tar bz2 package").unwrap();
+
+        temp_env::async_with_vars([("PIXI_HOME", Some(pixi_home_dir.to_str().unwrap()))], {
+            let pixi_home_dir = pixi_home_dir.clone();
+            let source_path = source_path.clone();
+            let file_name = file_name.clone();
+            async move {
+                fs::create_dir_all(&pixi_home_dir).unwrap();
+
+                let project = pixi_global::Project::discover_or_create().await.unwrap();
+                let channel_config = project.global_channel_config().clone();
+                let manifest_root = project.root.clone();
+
+                let specs = GlobalSpecs {
+                    specs: vec!["custom-package".to_string()],
+                    path: Some(Utf8NativePathBuf::from(
+                        source_path.to_string_lossy().to_string(),
+                    )),
+                    ..Default::default()
+                };
+
+                let global_specs = specs
+                    .to_global_specs(&channel_config, &manifest_root, &project, &[])
+                    .await
+                    .unwrap();
+
+                assert_eq!(global_specs.len(), 1);
+                let installed_spec = &global_specs[0];
+
+                let PixiSpec::PathBinary(path_spec) = &installed_spec.spec else {
+                    panic!("expected binary path spec");
+                };
+
+                let resolved_path = path_spec
+                    .resolve(&manifest_root)
+                    .unwrap()
+                    .canonicalize()
+                    .unwrap();
+                let expected_destination = pixi_home_dir
+                    .join("conda-files")
+                    .join(&file_name)
+                    .canonicalize()
+                    .unwrap();
+
+                assert_eq!(resolved_path, expected_destination);
+                assert!(
+                    expected_destination.is_file(),
+                    "expected copied .tar.bz2 file to exist"
                 );
             }
         })

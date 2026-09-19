@@ -23,7 +23,7 @@ pub use parsed_manifest::{ExposedName, ParsedEnvironment, ParsedManifest};
 use pixi_build_discovery::DiscoveryError;
 use pixi_build_frontend::BackendOverride;
 use pixi_command_dispatcher::{
-    BuildBackendMetadataSpec, BuildEnvironment, CommandDispatcher,
+    BuildBackendMetadataSpec, BuildEnvironment, BuildProfile, CommandDispatcher,
     CommandDispatcherError as DispatcherError, ComputeResultExt, EnvironmentRef, EnvironmentSpec,
     EphemeralEnv, InlinePackage, InstallPixiEnvironmentSpec, Limits, SourceCheckoutExt,
     keys::{SolvePixiEnvironmentKey, SolvePixiEnvironmentSpec},
@@ -829,6 +829,7 @@ impl Project {
                 variant_configuration: Some(variant_config.variant_configuration),
                 variant_files: Some(variant_config.variant_files),
                 inline_packages: inline_packages.into_iter().collect(),
+                build_profile: BuildProfile::Release,
             })
             .await?;
 

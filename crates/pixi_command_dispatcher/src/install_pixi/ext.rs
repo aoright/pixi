@@ -92,6 +92,7 @@ struct SharedBuildParams {
     variant_configuration:
         Option<std::collections::BTreeMap<String, Vec<pixi_record::VariantValue>>>,
     variant_files: Option<Vec<std::path::PathBuf>>,
+    build_profile: BuildProfile,
 }
 
 async fn install_inner(
@@ -151,6 +152,7 @@ async fn install_inner(
         build_environment: spec.build_environment.clone(),
         variant_configuration: spec.variant_configuration.clone(),
         variant_files: spec.variant_files.clone(),
+        build_profile: spec.build_profile,
     };
     // Inline package definitions for the source records in this
     // install, looked up per record by name when building from source.
@@ -171,9 +173,7 @@ async fn install_inner(
                 channels: shared.channels.clone(),
                 exclude_newer: shared.exclude_newer.clone(),
                 build_environment: shared.build_environment.clone(),
-                // Installing a pixi environment always builds in
-                // development mode.
-                build_profile: BuildProfile::Development,
+                build_profile: shared.build_profile,
                 variant_configuration: shared.variant_configuration.clone(),
                 variant_files: shared.variant_files.clone(),
                 // `pixi install` does not expose CLI-level overrides for
